@@ -6,7 +6,7 @@ import telebot
 from fake_useragent import UserAgent
 
 # إعدادات الهجوم
-MAX_THREADS = 1000  # عدد أقل لتفادي حظر IP
+MAX_THREADS = 500  # عدد أقل لتفادي حظر IP
 REQUEST_TIMEOUT = 5
 RETRY_DELAY = 0.1
 REPORT_INTERVAL = 1000
