@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 
 # إعدادات النظام
-MAX_THREADS = 8000
+MAX_THREADS = 7000
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 5
 REPORT_SENT = False  # متغير لتتبع إرسال التقرير
