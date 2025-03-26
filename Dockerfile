@@ -30,4 +30,4 @@ ENV PATH="/opt/venv/bin:$PATH"
 # نسخ الكود
 COPY . .
 
-CMD ["python", "bot.py"]
+CMD ["python", "j.py"]
