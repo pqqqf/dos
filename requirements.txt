@@ -1,16 +1,2 @@
-# المكتبات الأساسية
-requests==2.31.0
-python-telegram-bot==20.6
-fake-useragent==1.3.0
-
-# مكتبات الشبكات والأمان
-urllib3==2.1.0
-chardet==5.2.0
-certifi==2023.7.22
-idna==3.4
-socks==1.7.1
-
-# لميزات الهجوم المتقدم (اختياري)
-psutil==5.9.6  # لمراقبة الموارد
-tqdm==4.66.1  # لعرض التقدم
-PySocks==1.7.1  # لدعم البروكسي
+requests
+telebot
